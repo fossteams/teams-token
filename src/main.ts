@@ -1,5 +1,5 @@
 import {
-  BrowserWindow, app,
+  BrowserWindow, app, session,
 } from 'electron';
 
 import { homedir } from 'os';
@@ -70,72 +70,97 @@ function saveTeamsToken(token: string, type: TeamsSkype) {
 }
 
 app.whenReady().then(() => {
-  win = new BrowserWindow({ width: 800, height: 600 });
-  if (DEBUG) {
-    win.webContents.openDevTools();
-  }
-  win.webContents.on('will-navigate', (e, url) => {
-    if (url.startsWith('https://teams.microsoft.com/')) {
-      e.preventDefault();
+  // Check process arguments
+  const p = new Promise<void>((resolve, _) => {
+    if (process.argv.length === 3) {
+      // Check if 3rd argument is "logout"
+      switch (process.argv[2]) {
+        case 'logout':
+          session.defaultSession.clearStorageData().then(() => {
+            resolve();
+          });
+          break;
+
+        case 'get-url':
+          console.log(getLoginURL('teams'));
+          app.exit();
+          break;
+
+        default:
+          break;
+      }
     }
+    resolve();
   });
 
-  win.webContents.on('did-navigate', (e, url) => {
-    if (url.startsWith('https://teams.microsoft.com/go')) {
-      const token = url.replace('https://teams.microsoft.com/go#', '');
-      const searchParams = new URLSearchParams(token);
-      let teamsToken = searchParams.get('id_token');
-
-      if (teamsToken === null) {
-        teamsToken = searchParams.get('access_token');
-      }
-
-      const decoded = jwt.decode(teamsToken);
-      if (decoded === null) {
-        console.warn(`Inavlid JWT provided: ${searchParams}`);
-        return;
-      }
-
-      if (typeof (decoded) === 'string') {
-        console.error('Invalid decoded JWT: is a string');
-        return;
-      }
-
-      tokenResponseCount += 1;
-
-      if (tokenResponseCount > 5) {
-        console.error('Redirecting too many times, stopping');
+  p.then(() => {
+    win = new BrowserWindow({ width: 800, height: 600 });
+    if (DEBUG) {
+      win.webContents.openDevTools();
+    }
+    win.webContents.on('will-navigate', (e, url) => {
+      if (url.startsWith('https://teams.microsoft.com/')) {
         e.preventDefault();
-        win.webContents.stop();
-        return;
       }
+    });
 
-      console.log(`Audience: ${decoded.aud}`);
+    win.webContents.on('did-navigate', (e, url) => {
+      if (url.startsWith('https://teams.microsoft.com/go')) {
+        const token = url.replace('https://teams.microsoft.com/go#', '');
+        const searchParams = new URLSearchParams(token);
+        let teamsToken = searchParams.get('id_token');
 
-      if (decoded.aud === TEAMS_APP_ID) {
+        if (teamsToken === null) {
+          teamsToken = searchParams.get('access_token');
+        }
+
+        const decoded = jwt.decode(teamsToken);
+        if (decoded === null) {
+          console.warn(`Inavlid JWT provided: ${searchParams}`);
+          return;
+        }
+
+        if (typeof (decoded) === 'string') {
+          console.error('Invalid decoded JWT: is a string');
+          return;
+        }
+
+        tokenResponseCount += 1;
+
+        if (tokenResponseCount > 5) {
+          console.error('Redirecting too many times, stopping');
+          e.preventDefault();
+          win.webContents.stop();
+          return;
+        }
+
+        console.log(`Audience: ${decoded.aud}`);
+
+        if (decoded.aud === TEAMS_APP_ID) {
         // Teams Token
-        console.log('Got a Teams token');
-        e.preventDefault();
-        win.webContents.stop();
+          console.log('Got a Teams token');
+          e.preventDefault();
+          win.webContents.stop();
 
-        saveTeamsToken(teamsToken, 'teams');
-        authorize('chatsvcagg');
-      } else if (decoded.aud === SKYPE_RESOURCE) {
-        console.log('Got a Skype token');
-        saveTeamsToken(teamsToken, 'skype');
-        win.destroy();
-        app.quit();
-      } else if (decoded.aud === CHAT_SVC_AGG_RESOURCE) {
-        console.log('Got a ChatSvcAgg token');
-        saveTeamsToken(teamsToken, 'chatsvcagg');
-        e.preventDefault();
-        win.webContents.stop();
-        authorize('skype');
-      } else {
-        console.error(`Invalid audience ${decoded.aud} found.`);
+          saveTeamsToken(teamsToken, 'teams');
+          authorize('chatsvcagg');
+        } else if (decoded.aud === SKYPE_RESOURCE) {
+          console.log('Got a Skype token');
+          saveTeamsToken(teamsToken, 'skype');
+          win.destroy();
+          app.quit();
+        } else if (decoded.aud === CHAT_SVC_AGG_RESOURCE) {
+          console.log('Got a ChatSvcAgg token');
+          saveTeamsToken(teamsToken, 'chatsvcagg');
+          e.preventDefault();
+          win.webContents.stop();
+          authorize('skype');
+        } else {
+          console.error(`Invalid audience ${decoded.aud} found.`);
+        }
       }
-    }
-  });
+    });
 
-  authorize('teams');
+    authorize('teams');
+  });
 });
