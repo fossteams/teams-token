@@ -9,7 +9,7 @@ import axios, { AxiosResponse } from 'axios';
 import * as jwt from 'jsonwebtoken';
 
 const configPath = '.config/fossteams';
-const DEBUG = false;
+const DEBUG = process.env.NODE_ENV === 'debug';
 const MICROSOFT_TENANT_ID = 'f8cdef31-a31e-4b4a-93e4-5f571e91255a';
 const TEAMS_APP_ID = '5e3ce6c0-2b1f-4285-8d4b-75ee78787346';
 const SKYPE_RESOURCE = 'https://api.spaces.skype.com';
@@ -149,7 +149,7 @@ app.whenReady().then(() => {
         }
 
         if (decoded.tid === MICROSOFT_TENANT_ID && decoded.aud === SKYPE_RESOURCE) {
-          // Skip, we need a tenant selection
+          // We need a tenant selection
           console.log(`Tenant ID is MICROSOFT: aud=${decoded.aud}`);
           // Get Tenant list
           try {
@@ -163,6 +163,9 @@ app.whenReady().then(() => {
           // win.webContents.stop();
           // win.webContents.loadURL('https://teams.microsoft.com/go');
           return;
+        } if (currentTenant === null) {
+          // Company account
+          currentTenant = decoded.tid;
         }
 
         tokenResponseCount += 1;
@@ -176,7 +179,6 @@ app.whenReady().then(() => {
 
         console.log(`Audience: ${decoded.aud}`);
         console.log('Decoded', decoded);
-
 
         win.webContents.stop();
 
