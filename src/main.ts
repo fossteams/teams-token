@@ -22,6 +22,12 @@ let win : BrowserWindow | null = null;
 let tokenResponseCount = 0;
 let currentTenant : (string | null) = null;
 
+const tokens : Record<TeamsSkype, boolean> = {
+  teams: false,
+  chatsvcagg: false,
+  skype: false,
+};
+
 function getLoginURL(type: TeamsSkype, tenantId: string) : string {
   const loginUrl = new URL('https://login.microsoftonline.com');
   loginUrl.pathname = `/${tenantId}/oauth2/authorize`;
@@ -90,6 +96,14 @@ function getTenants(token: string) : Promise<AxiosResponse<Tenant[]>> {
       },
     });
   return req;
+}
+
+// Verifies that we've got all tokens
+function checkTokens() {
+  if (tokens.chatsvcagg && tokens.skype && tokens.teams) {
+    win.destroy();
+    app.quit();
+  }
 }
 
 app.whenReady().then(() => {
@@ -163,9 +177,15 @@ app.whenReady().then(() => {
           // win.webContents.stop();
           // win.webContents.loadURL('https://teams.microsoft.com/go');
           return;
-        } if (currentTenant === null) {
+        }
+
+        if (decoded.tid !== MICROSOFT_TENANT_ID && currentTenant === null) {
           // Company account
           currentTenant = decoded.tid;
+        }
+
+        if (currentTenant === null) {
+          currentTenant = 'common';
         }
 
         tokenResponseCount += 1;
@@ -183,25 +203,29 @@ app.whenReady().then(() => {
         win.webContents.stop();
 
         if (decoded.aud === TEAMS_APP_ID) {
-        // Teams Token
+          // Teams Token
           console.log('Got a Teams token');
           saveTeamsToken(teamsToken, 'teams');
-          win.destroy();
-          app.quit();
+          checkTokens();
+          tokens.teams = true;
+          authorize('skype', currentTenant);
         } else if (decoded.aud === SKYPE_RESOURCE) {
           console.log('Got a Skype token');
           saveTeamsToken(teamsToken, 'skype');
           authorize('chatsvcagg', currentTenant);
+          tokens.skype = true;
+          checkTokens();
         } else if (decoded.aud === CHAT_SVC_AGG_RESOURCE) {
           console.log('Got a ChatSvcAgg token');
           saveTeamsToken(teamsToken, 'chatsvcagg');
-          authorize('teams', currentTenant);
+          tokens.chatsvcagg = true;
+          checkTokens();
         } else {
           console.error(`Invalid audience ${decoded.aud} found.`);
         }
       }
     });
 
-    authorize('skype', 'common');
+    authorize('teams', 'common');
   });
 });
