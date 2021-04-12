@@ -9,6 +9,28 @@ yarn install
 yarn start
 ```
 
+## Commands
+
+### Get your token
+
+```
+yarn start
+```
+
+### Switch users
+
+**Warning:** this operation _doesn't_ delete / invalidate your token, but simply clears the cookies of the Electron browser.
+
+```
+yarn start logout
+```
+
+### Get login URL
+
+```
+yarn start get-url
+```
+
 ## Note
 
 Log-in with your Microsoft Teams account (your corprorate / school account) and let this app do the rest.
