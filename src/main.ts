@@ -5,22 +5,26 @@ import {
 import { homedir } from 'os';
 import { writeFileSync, existsSync, mkdirSync } from 'fs';
 import { v4 as uuidv4 } from 'uuid';
+import axios, { AxiosResponse } from 'axios';
 import * as jwt from 'jsonwebtoken';
 
 const configPath = '.config/fossteams';
 const DEBUG = false;
+const MICROSOFT_TENANT_ID = 'f8cdef31-a31e-4b4a-93e4-5f571e91255a';
 const TEAMS_APP_ID = '5e3ce6c0-2b1f-4285-8d4b-75ee78787346';
 const SKYPE_RESOURCE = 'https://api.spaces.skype.com';
 const CHAT_SVC_AGG_RESOURCE = 'https://chatsvcagg.teams.microsoft.com';
 const USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) MicrosoftTeams-Preview/1.4.00.7556 Chrome/80.0.3987.163 Electron/8.5.5 Safari/537.36';
 
 type TeamsSkype = 'teams' | 'skype' | 'chatsvcagg';
+
 let win : BrowserWindow | null = null;
 let tokenResponseCount = 0;
+let currentTenant : (string | null) = null;
 
-function getLoginURL(type: TeamsSkype) : string {
+function getLoginURL(type: TeamsSkype, tenantId: string) : string {
   const loginUrl = new URL('https://login.microsoftonline.com');
-  loginUrl.pathname = '/common/oauth2/authorize';
+  loginUrl.pathname = `/${tenantId}/oauth2/authorize`;
 
   const state = uuidv4();
   switch (type) {
@@ -55,9 +59,9 @@ function getLoginURL(type: TeamsSkype) : string {
   return loginUrl.toString();
 }
 
-function authorize(type: TeamsSkype) {
-  console.log(`Authorizing ${type}`);
-  win.loadURL(getLoginURL(type), {
+function authorize(type: TeamsSkype, tenantId: string) {
+  console.log(`Authorizing ${type} with tenantId=${tenantId}`);
+  win.loadURL(getLoginURL(type, tenantId), {
     userAgent: USER_AGENT,
   });
 }
@@ -67,6 +71,25 @@ function saveTeamsToken(token: string, type: TeamsSkype) {
     mkdirSync(`${homedir}/${configPath}`, { recursive: true });
   }
   writeFileSync(`${homedir}/${configPath}/token-${type}.jwt`, token);
+}
+
+type Tenant = {
+  tenantId: string;
+  tenantName: string;
+  userId: string;
+  isInvitationRedeemed: boolean;
+  userType: string;
+  tenantType: string;
+}
+
+function getTenants(token: string) : Promise<AxiosResponse<Tenant[]>> {
+  const req = axios.get('https://teams.microsoft.com/api/mt/emea/beta/users/tenants',
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+  return req;
 }
 
 app.whenReady().then(() => {
@@ -82,7 +105,7 @@ app.whenReady().then(() => {
           break;
 
         case 'get-url':
-          console.log(getLoginURL('teams'));
+          console.log(getLoginURL('teams', 'common'));
           app.exit();
           break;
 
@@ -104,7 +127,7 @@ app.whenReady().then(() => {
       }
     });
 
-    win.webContents.on('did-navigate', (e, url) => {
+    win.webContents.on('did-navigate', async (e, url) => {
       if (url.startsWith('https://teams.microsoft.com/go')) {
         const token = url.replace('https://teams.microsoft.com/go#', '');
         const searchParams = new URLSearchParams(token);
@@ -125,6 +148,23 @@ app.whenReady().then(() => {
           return;
         }
 
+        if (decoded.tid === MICROSOFT_TENANT_ID && decoded.aud === SKYPE_RESOURCE) {
+          // Skip, we need a tenant selection
+          console.log(`Tenant ID is MICROSOFT: aud=${decoded.aud}`);
+          // Get Tenant list
+          try {
+            const tenants = await (await getTenants(teamsToken)).data;
+            // Pick the first tenant and authorize Skype
+            currentTenant = tenants[0].tenantId;
+            authorize('skype', currentTenant);
+          } catch (err) {
+            console.error(`Unable to get tenants: ${err}`);
+          }
+          // win.webContents.stop();
+          // win.webContents.loadURL('https://teams.microsoft.com/go');
+          return;
+        }
+
         tokenResponseCount += 1;
 
         if (tokenResponseCount > 5) {
@@ -135,32 +175,31 @@ app.whenReady().then(() => {
         }
 
         console.log(`Audience: ${decoded.aud}`);
+        console.log('Decoded', decoded);
+
+
+        win.webContents.stop();
 
         if (decoded.aud === TEAMS_APP_ID) {
         // Teams Token
           console.log('Got a Teams token');
-          e.preventDefault();
-          win.webContents.stop();
-
           saveTeamsToken(teamsToken, 'teams');
-          authorize('chatsvcagg');
+          win.destroy();
+          app.quit();
         } else if (decoded.aud === SKYPE_RESOURCE) {
           console.log('Got a Skype token');
           saveTeamsToken(teamsToken, 'skype');
-          win.destroy();
-          app.quit();
+          authorize('chatsvcagg', currentTenant);
         } else if (decoded.aud === CHAT_SVC_AGG_RESOURCE) {
           console.log('Got a ChatSvcAgg token');
           saveTeamsToken(teamsToken, 'chatsvcagg');
-          e.preventDefault();
-          win.webContents.stop();
-          authorize('skype');
+          authorize('teams', currentTenant);
         } else {
           console.error(`Invalid audience ${decoded.aud} found.`);
         }
       }
     });
 
-    authorize('teams');
+    authorize('skype', 'common');
   });
 });
