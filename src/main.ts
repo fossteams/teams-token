@@ -59,7 +59,6 @@ function getLoginURL(type: TeamsSkype, tenantId: string) : string {
   loginUrl.searchParams.append('redirect_uri', 'https://teams.microsoft.com/go');
   loginUrl.searchParams.append('x-client-SKU', 'Js');
   loginUrl.searchParams.append('x-client-Ver', '1.0.9');
-  loginUrl.searchParams.append('prompt', 'none');
   loginUrl.searchParams.append('nonce', uuidv4());
 
   return loginUrl.toString();
@@ -153,7 +152,20 @@ app.whenReady().then(() => {
 
         const decoded = jwt.decode(teamsToken);
         if (decoded === null) {
-          console.warn(`Inavlid JWT provided: ${searchParams}`);
+          console.warn(`Invalid JWT provided: ${searchParams}`);
+          if (searchParams.has('error')) {
+            const err = searchParams.get('error');
+            const errDesc = searchParams.get('error_description');
+            console.error(`Got error = ${err}: ${errDesc}`);
+            switch (err) {
+              case 'interaction_required':
+                // User has to interact!
+                console.error('User interaction is required (e.g: MFA). Are you using "?prompt=none" ?');
+                break;
+              default:
+                // Can't handle this, sorry
+            }
+          }
           return;
         }
 
